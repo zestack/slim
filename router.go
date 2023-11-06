@@ -403,39 +403,44 @@ func (r *defaultRouter) Match(req *http.Request, pathParams *PathParams) RouteMa
 		))
 	}
 	pattern := route.Pattern()
-	var index int
+	var valueIndex int
+	var paramIndex int
 	for i, l := 0, len(pattern); i < l; i++ {
 		if pattern[i] == paramLabel || pattern[i] == anyLabel {
 			j := i
 			for ; j < l && pattern[j] != pathSeparator; j++ {
 			}
-			i = j
-			if index >= tail.leaf.paramsCount {
+			if paramIndex >= tail.leaf.paramsCount {
 				panic(fmt.Errorf(
 					"slim: invalid param count for routing  %s@%s#%d",
 					req.Method, ep.pattern, ep.routeId,
 				))
 			}
 			key := pattern[i+1 : j]
-			value := segments[index][1:]
+			value := segments[valueIndex][1:]
 			if pattern[i] == anyLabel {
 				if key == "" {
 					key = string(anyLabel)
 				}
-				value = strings.Join(segments[index:], "/")[1:]
+				value = strings.Join(segments[valueIndex:], "/")[1:]
 				if tailingSlash {
 					value += "/"
 				}
 				i = l
+			} else {
+				i = j
 			}
 			//  there are cases when path parameter needs to be unescaped
 			tmpVal, err := url.PathUnescape(value)
 			if err == nil { // handle problems by ignoring them.
 				value = tmpVal
 			}
-			(*pathParams)[index].Name = key
-			(*pathParams)[index].Value = value
-			index++
+			(*pathParams)[paramIndex].Name = key
+			(*pathParams)[paramIndex].Value = value
+			paramIndex++
+			valueIndex++
+		} else if pattern[i] == pathSeparator && i > 0 {
+			valueIndex++
 		}
 	}
 	result.Type = RouteMatchFound
