@@ -97,10 +97,10 @@ func (e endpoints) Less(i, j int) bool { return e[i].method > e[j].method }
 type node struct {
 	typ            nodeTyp // 节点类型
 	parent         *node   // 上级节点
-	segment        string  // 节点表达式，静态节点有效
+	segment        string  // 节点表达式，为静态节点时有效
 	leaf           *leaf   // 节点叶子
 	leafCount      int     // 叶子数量
-	staticChildren []*node // 下级静态子节点
+	staticChildren []*node // 静态子节点
 	paramChild     *node   // 参数子节点
 	anyChild       *node   // 通配子节点
 }
