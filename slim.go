@@ -174,9 +174,9 @@ func New() *Slim {
 
 func (s *Slim) NewContext(w http.ResponseWriter, r *http.Request) Context {
 	p := make(PathParams, s.contextPathParamAllocSize)
-	return &context{
+	c := &context{
 		request:       r,
-		response:      NewResponseWriter(r.Method, w),
+		response:      nil,
 		allowsMethods: make([]string, 0),
 		store:         make(Map),
 		slim:          s,
@@ -184,6 +184,10 @@ func (s *Slim) NewContext(w http.ResponseWriter, r *http.Request) Context {
 		matchType:     RouteMatchUnknown,
 		route:         nil,
 	}
+	if w != nil && r != nil {
+		c.response = NewResponseWriter(r.Method, w)
+	}
+	return c
 }
 
 func (s *Slim) NewRouter() Router {

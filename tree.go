@@ -37,12 +37,12 @@ func split(s string) ([]string, bool) {
 		if start+1 < i {
 			segments = append(segments, s[start:i])
 		}
-		start = -1
+		start = i
 	}
 	if start+1 == l {
 		return segments, true
 	}
-	if start > -1 {
+	if start > -1 && start < l-1 {
 		segments = append(segments, s[start:])
 	}
 	return segments, false

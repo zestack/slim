@@ -17,13 +17,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Context represents the context of the current HTTP request. It holds request and
 // response objects, path, path parameters, data and registered handler.
 type Context interface {
-	stdctx.Context
+	Context() stdctx.Context
 	// Request returns `*http.Request`.
 	Request() *http.Request
 	// SetRequest sets `*http.Request`.
@@ -32,7 +31,9 @@ type Context interface {
 	Response() ResponseWriter
 	// SetResponse sets `slim.ResponseWriter`.
 	SetResponse(r ResponseWriter)
+	// Logger returns the `Logger` instance.
 	Logger() Logger
+	// SetLogger Set the logger
 	SetLogger(logger Logger)
 	// Filesystem returns `fs.FS`.
 	Filesystem() fs.FS
@@ -217,16 +218,8 @@ func (x *context) Reset(w http.ResponseWriter, r *http.Request) {
 	x.store = nil
 }
 
-func (x *context) Deadline() (time.Time, bool) {
-	return x.request.Context().Deadline()
-}
-
-func (x *context) Done() <-chan struct{} {
-	return x.request.Context().Done()
-}
-
-func (x *context) Err() error {
-	return x.request.Context().Err()
+func (x *context) Context() stdctx.Context {
+	return x.request.Context()
 }
 
 // Request returns `*http.Request`.
@@ -493,18 +486,6 @@ func (x *context) Set(key string, val any) {
 		x.store = make(map[string]any)
 	}
 	x.store[key] = val
-}
-
-func (x *context) Value(key any) any {
-	if sKey, ok := key.(string); ok {
-		x.mu.RLock()
-		val, has := x.store[sKey]
-		x.mu.RUnlock()
-		if has {
-			return val
-		}
-	}
-	return x.request.Context().Value(key)
 }
 
 // Bind binds the request body into a provided type `i`. The default binder
