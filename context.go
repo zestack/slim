@@ -561,8 +561,8 @@ func (x *context) JSON(code int, i any) error {
 
 // JSONPretty sends a pretty-print JSON with status code.
 func (x *context) JSONPretty(code int, i any, indent string) error {
-	x.response.WriteHeader(code)
 	x.writeContentType(MIMEApplicationJSONCharsetUTF8)
+	x.response.WriteHeader(code)
 	return x.slim.JSONSerializer.Serialize(x.response, i, indent)
 }
 
@@ -574,8 +574,8 @@ func (x *context) JSONBlob(code int, b []byte) error {
 // JSONP sends a JSONP response with status code. It uses `callback` to construct
 // the JSONP payload.
 func (x *context) JSONP(code int, callback string, i any) error {
-	x.response.WriteHeader(code)
 	x.writeContentType(MIMEApplicationJavaScriptCharsetUTF8)
+	x.response.WriteHeader(code)
 	if _, err := x.response.Write([]byte(callback + "(")); err != nil {
 		return err
 	}
@@ -591,8 +591,8 @@ func (x *context) JSONP(code int, callback string, i any) error {
 // JSONPBlob sends a JSONP blob response with status code. It uses `callback`
 // to construct the JSONP payload.
 func (x *context) JSONPBlob(code int, callback string, b []byte) error {
-	x.response.WriteHeader(code)
 	x.writeContentType(MIMEApplicationJavaScriptCharsetUTF8)
+	x.response.WriteHeader(code)
 	if _, err := x.response.Write([]byte(callback + "(")); err != nil {
 		return err
 	}
@@ -610,8 +610,8 @@ func (x *context) XML(code int, i any) error {
 
 // XMLPretty sends a pretty-print XML with status code.
 func (x *context) XMLPretty(code int, i any, indent string) error {
-	x.response.WriteHeader(code)
 	x.writeContentType(MIMEApplicationXMLCharsetUTF8)
+	x.response.WriteHeader(code)
 	if _, err := x.response.Write([]byte(xml.Header)); err != nil {
 		return err
 	}
@@ -620,8 +620,8 @@ func (x *context) XMLPretty(code int, i any, indent string) error {
 
 // XMLBlob sends an XML blob response with status code.
 func (x *context) XMLBlob(code int, b []byte) error {
-	x.response.WriteHeader(code)
 	x.writeContentType(MIMEApplicationXMLCharsetUTF8)
+	x.response.WriteHeader(code)
 	_, err := x.response.Write([]byte(xml.Header))
 	if err == nil {
 		_, err = x.response.Write(b)
@@ -631,16 +631,16 @@ func (x *context) XMLBlob(code int, b []byte) error {
 
 // Blob sends a blob response with a status code and content type.
 func (x *context) Blob(code int, contentType string, b []byte) error {
-	x.response.WriteHeader(code)
 	x.writeContentType(contentType)
+	x.response.WriteHeader(code)
 	_, err := x.response.Write(b)
 	return err
 }
 
 // Stream sends a streaming response with status code and content type.
 func (x *context) Stream(code int, contentType string, r io.Reader) error {
-	x.response.WriteHeader(code)
 	x.writeContentType(contentType)
+	x.response.WriteHeader(code)
 	_, err := io.Copy(x.response, r)
 	return err
 }
