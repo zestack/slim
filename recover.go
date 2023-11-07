@@ -57,6 +57,7 @@ func (config RecoverConfig) ToMiddleware() MiddlewareFunc {
 				err = tmpErr
 			}
 		}()
-		return next(c)
+		err = next(c)
+		return
 	}
 }
