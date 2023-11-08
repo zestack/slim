@@ -104,6 +104,7 @@ func newSlice(header string, looker func(*Accept)) AcceptSlice {
 			Type:    typeSubtype[0],
 			Subtype: typeSubtype[1],
 			Q:       1.0,
+			Extra:   make(map[string]any),
 		}
 		// If there is only one rangeParams, we can stop here.
 		if len(rangeParams) == 1 {
