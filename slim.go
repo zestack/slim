@@ -167,6 +167,7 @@ func New() *Slim {
 		Renderer:             nil,
 		JSONSerializer:       &JSONSerializer{},
 		XMLSerializer:        &XMLSerializer{},
+		Logger:               NewLogger(),
 		Debug:                true,
 		MultipartMemoryLimit: 32 << 20, // 32 MB
 		PrettyIndent:         "  ",
