@@ -158,7 +158,7 @@ type Slim struct {
 func New() *Slim {
 	s := &Slim{
 		routers:              make(map[string]Router),
-		negotiator:           NewNegotiator(10),
+		negotiator:           NewNegotiator(10, nil),
 		NewContextFunc:       nil,
 		ErrorHandler:         ErrorHandler,
 		Filesystem:           os.DirFS("."),
@@ -243,6 +243,16 @@ func (s *Slim) Host(name string, middleware ...MiddlewareFunc) Router {
 	router.Use(middleware...)
 	s.routers[name] = router
 	return router
+}
+
+// Negotiator 返回内容协商工具
+func (s *Slim) Negotiator() *Negotiator {
+	return s.negotiator
+}
+
+// SetNegotiator 设置自定义内容协商工具
+func (s *Slim) SetNegotiator(negotiator *Negotiator) {
+	s.negotiator = negotiator
 }
 
 // AcquireContext returns 自上下文缓存池中返回一个空闲的 `mux.Context` 实例。

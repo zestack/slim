@@ -20,15 +20,20 @@ type cache struct {
 //	Accept: text/html, application/xhtml+xml, application/xml;q=0.9, image/webp, */*;q=0.8
 type Negotiator struct {
 	capacity int // for cache
+	looker   func(*Accept)
 	caches   map[string]*cache
 }
 
-func NewNegotiator(capacity int) *Negotiator {
+func NewNegotiator(capacity int, looker func(accept *Accept)) *Negotiator {
 	if capacity <= 0 {
 		capacity = 10
 	}
+	if looker == nil {
+		looker = func(accept *Accept) {}
+	}
 	return &Negotiator{
 		capacity: capacity,
+		looker:   looker,
 		caches:   make(map[string]*cache),
 	}
 }
@@ -49,7 +54,7 @@ func (n *Negotiator) Slice(header string) AcceptSlice {
 		}
 		delete(n.caches, s)
 	}
-	slice := newSlice(header)
+	slice := newSlice(header, n.looker)
 	n.caches[header] = &cache{1, slice}
 	return slice
 }
@@ -67,6 +72,7 @@ type Accept struct {
 	Type, Subtype string
 	Q             float64
 	mime          string
+	Extra         map[string]any // 扩展属性
 }
 
 func (a *Accept) Mime() string {
@@ -86,7 +92,7 @@ type AcceptSlice []Accept
 // in the header first comes in the returned value.
 //
 // See http://www.w3.org/Protocols/rfc2616/rfc2616-sec14 for more information.
-func newSlice(header string) AcceptSlice {
+func newSlice(header string, looker func(*Accept)) AcceptSlice {
 	mediaRanges := strings.Split(header, ",")
 	accepted := make(AcceptSlice, 0, len(mediaRanges))
 	for _, mediaRange := range mediaRanges {
@@ -101,6 +107,7 @@ func newSlice(header string) AcceptSlice {
 		}
 		// If there is only one rangeParams, we can stop here.
 		if len(rangeParams) == 1 {
+			looker(&item)
 			accepted = append(accepted, item)
 			continue
 		}
@@ -127,6 +134,7 @@ func newSlice(header string) AcceptSlice {
 			}
 		}
 		if validParams {
+			looker(&item)
 			accepted = append(accepted, item)
 		}
 	}
