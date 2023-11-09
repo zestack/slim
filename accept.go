@@ -2,9 +2,13 @@ package slim
 
 import (
 	"fmt"
+	"mime"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type cache struct {
@@ -13,36 +17,48 @@ type cache struct {
 }
 
 // Negotiator An HTTP content negotiator
-//
-//	Accept: <MIME_type>/<MIME_subtype>
-//	Accept: <MIME_type>/*
-//	Accept: */*
-//	Accept: text/html, application/xhtml+xml, application/xml;q=0.9, image/webp, */*;q=0.8
 type Negotiator struct {
-	capacity int // for cache
-	looker   func(*Accept)
-	caches   map[string]*cache
+	// 缓存容量
+	capacity int
+	// 有些时候，解析出来的 Accept 并
+	// 不是 W3C 所定义的标准的值，我们
+	// 通过该函数将其重写成标准格式的值。
+	onParse func(*Accept)
+	// 内容协商的报头很少变化，可以使用缓存优化，
+	// 不需要每次解析
+	caches map[string]*cache
+	// 用于合并解析，优化并发
+	sfg singleflight.Group
 }
 
-func NewNegotiator(capacity int, looker func(accept *Accept)) *Negotiator {
+func NewNegotiator(capacity int, onParse func(accept *Accept)) *Negotiator {
 	if capacity <= 0 {
 		capacity = 10
 	}
-	if looker == nil {
-		looker = func(accept *Accept) {}
+	if onParse == nil {
+		onParse = onAcceptParsed
 	}
 	return &Negotiator{
 		capacity: capacity,
-		looker:   looker,
+		onParse:  onParse,
 		caches:   make(map[string]*cache),
 	}
 }
 
 func (n *Negotiator) Slice(header string) AcceptSlice {
-	if c, ok := n.caches[header]; ok {
-		c.hint++
-		return c.slice
-	}
+	v, _, _ := n.sfg.Do(header, func() (any, error) {
+		if c, ok := n.caches[header]; ok {
+			c.hint++
+			return c.slice, nil
+		}
+		n.overflow()
+		c := n.parse(header)
+		return c, nil
+	})
+	return v.(AcceptSlice)
+}
+
+func (n *Negotiator) overflow() {
 	if len(n.caches) >= n.capacity {
 		var s string
 		var hint int
@@ -54,45 +70,98 @@ func (n *Negotiator) Slice(header string) AcceptSlice {
 		}
 		delete(n.caches, s)
 	}
-	slice := newSlice(header, n.looker)
+}
+
+func (n *Negotiator) parse(header string) AcceptSlice {
+	slice := newSlice(header, n.onParse)
 	n.caches[header] = &cache{1, slice}
 	return slice
 }
 
-func (n *Negotiator) Is(header string, expects ...string) bool {
-	return n.Slice(header).Is(expects...)
+func (n *Negotiator) Charset(r *http.Request, charsets ...string) string {
+	return n.Accepts(r.Header.Get("Accept-Charset"), charsets...)
 }
 
-func (n *Negotiator) Type(header string, expects ...string) string {
-	return n.Slice(header).Type(expects...)
+func (n *Negotiator) Encoding(r *http.Request, encodings ...string) string {
+	return n.Accepts(r.Header.Get("Accept-Encoding"), encodings...)
 }
 
-// Accept represents a parsed `Accept` header.
-type Accept struct {
-	Type, Subtype string
-	Q             float64
-	mime          string
-	Extra         map[string]any // 扩展属性
+func (n *Negotiator) Language(r *http.Request, languages ...string) string {
+	return n.Accepts(r.Header.Get("Accept-Language"), languages...)
 }
 
-func (a *Accept) Mime() string {
-	if a.mime == "" {
-		a.mime = a.Type + "/" + a.Subtype
+func (n *Negotiator) Type(r *http.Request, types ...string) string {
+	var keys []string
+	var ctypes []string
+	for _, typ := range types {
+		keys = append(keys, typ)
+		switch typ {
+		case "jsonp":
+			ctypes = append(ctypes, MIMEApplicationJavaScript)
+		case "xml":
+			keys = append(keys, typ[:])
+			ctypes = append(ctypes, MIMEApplicationXML, MIMETextXML)
+		case "form":
+			keys = append(keys, typ)
+			ctypes = append(ctypes, MIMEMultipartForm, MIMEApplicationForm)
+		case "protobuf":
+			ctypes = append(ctypes, MIMEApplicationProtobuf)
+		case "msgpack":
+			ctypes = append(ctypes, MIMEApplicationMsgpack)
+		case "text", "string":
+			ctypes = append(ctypes, MIMETextPlain)
+		default:
+			if !strings.Contains(typ, "/") {
+				value := mime.TypeByExtension("." + typ)
+				if value != "" {
+					ctypes = append(ctypes, value)
+					continue
+				}
+			}
+			ctypes = append(ctypes, typ[:])
+		}
 	}
-	return a.mime
+	s := n.Slice(r.Header.Get("Accept"))
+	_, i, _ := s.Negotiate(ctypes...)
+	if i > -1 {
+		return keys[i]
+	}
+	return ""
+}
+
+func (n *Negotiator) Accepts(header string, ctypes ...string) string {
+	s := n.Slice(header)
+	negotiated, _, _ := s.Negotiate(ctypes...)
+	return negotiated
+}
+
+// Accept represents a parsed `Accept(-Charset|-Encoding|-Language)` header.
+type Accept struct {
+	Type       string
+	Subtype    string
+	Quality    float64
+	Extensions map[string]any
 }
 
 // AcceptSlice is a slice of accept.
 type AcceptSlice []Accept
 
-// newSlice parses an HTTP Accept header and returns AcceptSlice, sorted in
-// decreasing order of preference.  If the header lists multiple types that
-// have the same level of preference (same specificity of a type and subtype,
-// same qvalue, and same number of extensions), the type that was listed
-// in the header first comes in the returned value.
+// Negotiate returns a type that is accepted by both the header declaration,
+// and the list of types provided.
+// If no common types are found, an empty string is returned.
+func Negotiate(header string, ctypes ...string) (string, error) {
+	s, _, e := newSlice(header, onAcceptParsed).Negotiate(ctypes...)
+	return s, e
+}
+
+func onAcceptParsed(*Accept) {}
+
+// 解析 HTML 的 Accept(-Charset|-Encoding|-Language) 报头，
+// 返回 AcceptSlice，该结果是根据值的类型和权重因子按照降序排列的，
+// 如果类型一致且权重一致，则使用出场的先后顺序排列。
 //
-// See http://www.w3.org/Protocols/rfc2616/rfc2616-sec14 for more information.
-func newSlice(header string, looker func(*Accept)) AcceptSlice {
+// http://www.w3.org/Protocols/rfc2616/rfc2616-sec14
+func newSlice(header string, onParse func(*Accept)) AcceptSlice {
 	mediaRanges := strings.Split(header, ",")
 	accepted := make(AcceptSlice, 0, len(mediaRanges))
 	for _, mediaRange := range mediaRanges {
@@ -100,18 +169,21 @@ func newSlice(header string, looker func(*Accept)) AcceptSlice {
 		if err != nil {
 			continue
 		}
-		item := Accept{
-			Type:    typeSubtype[0],
-			Subtype: typeSubtype[1],
-			Q:       1.0,
-			Extra:   make(map[string]any),
+
+		accept := Accept{
+			Type:       typeSubtype[0],
+			Subtype:    typeSubtype[1],
+			Quality:    1.0,
+			Extensions: make(map[string]any),
 		}
+
 		// If there is only one rangeParams, we can stop here.
 		if len(rangeParams) == 1 {
-			looker(&item)
-			accepted = append(accepted, item)
+			onParse(&accept)
+			accepted = append(accepted, accept)
 			continue
 		}
+
 		// Validate the rangeParams.
 		validParams := true
 		for _, v := range rangeParams[1:] {
@@ -130,13 +202,15 @@ func newSlice(header string, looker func(*Accept)) AcceptSlice {
 				if qval > 1.0 {
 					qval = 1.0
 				}
-				item.Q = qval
-				//break // 不跳过，检查 validParams
+				accept.Quality = qval
+			} else {
+				accept.Extensions[name] = nameVal[1]
 			}
 		}
+
 		if validParams {
-			looker(&item)
-			accepted = append(accepted, item)
+			onParse(&accept)
+			accepted = append(accepted, accept)
 		}
 	}
 	sort.Sort(accepted)
@@ -144,31 +218,31 @@ func newSlice(header string, looker func(*Accept)) AcceptSlice {
 }
 
 // Len implements the Len() method of the Sort interface.
-func (a AcceptSlice) Len() int {
-	return len(a)
+func (slice AcceptSlice) Len() int {
+	return len(slice)
 }
 
 // Less implements the Less() method of the Sort interface.  Elements are
 // sorted in order of decreasing preference.
-func (a AcceptSlice) Less(i, j int) bool {
+func (slice AcceptSlice) Less(i, j int) bool {
 	// Higher qvalues come first.
-	if a[i].Q > a[j].Q {
+	if slice[i].Quality > slice[j].Quality {
 		return true
-	} else if a[i].Q < a[j].Q {
+	} else if slice[i].Quality < slice[j].Quality {
 		return false
 	}
 
 	// Specific types come before wildcard types.
-	if a[i].Type != "*" && a[j].Type == "*" {
+	if slice[i].Type != "*" && slice[j].Type == "*" {
 		return true
-	} else if a[i].Type == "*" && a[j].Type != "*" {
+	} else if slice[i].Type == "*" && slice[j].Type != "*" {
 		return false
 	}
 
 	// Specific subtypes come before wildcard subtypes.
-	if a[i].Subtype != "*" && a[j].Subtype == "*" {
+	if slice[i].Subtype != "*" && slice[j].Subtype == "*" {
 		return true
-	} else if a[i].Subtype == "*" && a[j].Subtype != "*" {
+	} else if slice[i].Subtype == "*" && slice[j].Subtype != "*" {
 		return false
 	}
 
@@ -176,88 +250,52 @@ func (a AcceptSlice) Less(i, j int) bool {
 }
 
 // Swap implements the Swap() method of the Sort interface.
-func (a AcceptSlice) Swap(i, j int) {
-	a[i], a[j] = a[j], a[i]
+func (slice AcceptSlice) Swap(i, j int) {
+	slice[i], slice[j] = slice[j], slice[i]
 }
 
-func (a AcceptSlice) Is(expect ...string) bool {
-	for _, e := range expect {
-		for _, s := range a {
-			if e == s.Mime() {
-				return true
+// Negotiate returns a type that is accepted by both the AcceptSlice, and the
+// list of types provided. If no common types are found, an empty string is
+// returned.
+func (slice AcceptSlice) Negotiate(ctypes ...string) (string, int, error) {
+	if len(ctypes) == 0 {
+		return "", -1, nil
+	}
+
+	typeSubtypes := make([][]string, 0, len(ctypes))
+	for i, v := range ctypes {
+		_, ts, err := parseMediaRange(v)
+		if err != nil {
+			return "", -1, err
+		}
+		if ts[0] == "*" && ts[1] == "*" {
+			return v, i, nil
+		}
+		typeSubtypes = append(typeSubtypes, ts)
+	}
+
+	// 由于 slice 是根据权重排序的，返回的值
+	// 当然也要依据权重来返回，所以先查看 slice，
+	// 然后循环 ctypes。
+	for _, a := range slice {
+		for i, ts := range typeSubtypes {
+			if ((a.Type == ts[0] || a.Type == "*") && (a.Subtype == ts[1] || a.Subtype == "*")) ||
+				(ts[0] == "*" && ts[1] == a.Subtype) ||
+				(ts[0] == a.Type && ts[1] == "*") {
+				return ctypes[i], i, nil
 			}
 		}
 	}
-	return false
+	return "", -1, nil
 }
 
-func (a AcceptSlice) Type(expects ...string) string {
-	if len(expects) == 0 {
-		return ""
+// Accepts returns true if the provided type is accepted.
+func (slice AcceptSlice) Accepts(ctype string) bool {
+	t, i, err := slice.Negotiate(ctype)
+	if t == "" || err != nil || i == -1 {
+		return false
 	}
-	var fuzzies [][2]string
-	for _, expect := range expects {
-		switch expect {
-		case "html":
-			if a.Is(MIMETextHTML) {
-				return expect
-			}
-			fuzzies = append(fuzzies, [2]string{expect, "text/*"})
-		case "json":
-			if a.Is(MIMEApplicationJSON) {
-				return expect
-			}
-			fuzzies = append(fuzzies, [2]string{expect, "text/*"})
-		case "jsonp":
-			if a.Is(MIMEApplicationJavaScript) {
-				return expect
-			}
-		case "xml":
-			if a.Is(MIMEApplicationXML, MIMETextXML) {
-				return expect
-			}
-			fuzzies = append(fuzzies, [2]string{expect, "text/*"})
-		case "form":
-			if a.Is(MIMEMultipartForm, MIMEApplicationForm) {
-				return expect
-			}
-		case "protobuf":
-			if a.Is(MIMEApplicationProtobuf) {
-				return expect
-			}
-		case "msgpack":
-			if a.Is(MIMEApplicationMsgpack) {
-				return expect
-			}
-		case "text", "string":
-			if a.Is(MIMETextPlain) {
-				return expect
-			}
-		default:
-			_, typeSubtype, err := parseMediaRange(expect)
-			if err != nil {
-				continue
-			}
-			if a.Is(typeSubtype[0] + "/" + typeSubtype[1]) {
-				return expect
-			}
-			//if typeSubtype[0] == "text" {
-			//	fuzzies = append(fuzzies, [2]string{expect, "text/*"})
-			//}
-			fuzzies = append(fuzzies, [2]string{expect, typeSubtype[0] + "/*"})
-		}
-	}
-	if fuzzies != nil {
-		for _, f := range fuzzies {
-			if a.Is(f[1]) {
-				return f[0]
-			}
-		}
-	}
-	if a.Is("*/*") {
-		return expects[0]
-	}
-	return ""
+	return true
 }
 
 // parseMediaRange parses the provided media range, and on success returns the

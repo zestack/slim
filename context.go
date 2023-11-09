@@ -24,8 +24,10 @@ import (
 type Context interface {
 	Context() stdctx.Context
 	// Request returns `*http.Request`.
+	// 返回当前请求的 `*http.Request` 结构体实例。
 	Request() *http.Request
 	// SetRequest sets `*http.Request`.
+	// 设置 `*http.Request` 结构体实例。
 	SetRequest(r *http.Request)
 	// Response returns `slim.ResponseWriter`.
 	Response() ResponseWriter
@@ -50,7 +52,15 @@ type Context interface {
 	// The behavior can be configured using `Echo#IPExtractor`.
 	RealIP() string
 	RequestURI() string
+	// Accepts 返回支持的权重最高的媒体类型，若匹配失败则会返回空字符串。
+	// 给出的值可以是标准的媒体类型（如 application/json），也可以是扩展名（如 json、xml 等）。
 	Accepts(expect ...string) string
+	// AcceptsEncodings 返回支持的权重最高的编码方式，若匹配失败则会返回空字符串。
+	AcceptsEncodings(encodings ...string) string
+	// AcceptsCharsets 返回支持的权重最高的字符集，若匹配失败则会返回空字符串。
+	AcceptsCharsets(charsets ...string) string
+	// AcceptsLanguages 返回支持的权重最高的语言，若匹配失败则会返回空字符串。
+	AcceptsLanguages(languages ...string) string
 	// AllowsMethods 返回允许的请求方法
 	AllowsMethods() []string
 	// RouteMatchType returns router match type for current context. This helps middlewares to distinguish which type
@@ -325,7 +335,19 @@ func (x *context) RequestURI() string {
 }
 
 func (x *context) Accepts(expect ...string) string {
-	return x.slim.negotiator.Type(x.Header(HeaderAccept), expect...)
+	return x.slim.negotiator.Type(x.request, expect...)
+}
+
+func (x *context) AcceptsEncodings(encodings ...string) string {
+	return x.slim.negotiator.Encoding(x.request, encodings...)
+}
+
+func (x *context) AcceptsCharsets(charsets ...string) string {
+	return x.slim.negotiator.Charset(x.request, charsets...)
+}
+
+func (x *context) AcceptsLanguages(languages ...string) string {
+	return x.slim.negotiator.Language(x.request, languages...)
 }
 
 func (x *context) AllowsMethods() []string {
