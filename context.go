@@ -3,7 +3,6 @@ package slim
 import (
 	"bytes"
 	stdctx "context"
-	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -156,7 +155,6 @@ type Context interface {
 	Inline(file string, name string) error
 	// NoContent sends a response with nobody and a status code.
 	NoContent(code ...int) error
-	Respond(code int, i any) error
 	// Redirect redirects the request to a provided URL with status code.
 	Redirect(code int, url string) error
 	// Error invokes the registered HTTP error handler.
@@ -739,98 +737,6 @@ func (x *context) NoContent(code ...int) error {
 	return nil
 }
 
-func (x *context) Respond(code int, i any) error {
-	if x.request.Method == http.MethodHead {
-		return x.NoContent(code)
-	}
-	// TODO(hupeh): 简化 case 中的判断逻辑
-	switch x.Accepts("html", "json", "jsonp", "xml", "text", "text/*") {
-	case "html":
-		switch v := i.(type) {
-		case []byte:
-			return x.HTMLBlob(code, v)
-		case BytesGetter:
-			return x.HTMLBlob(code, v.Bytes())
-		default:
-			return x.HTML(code, fmt.Sprintf("%v", i))
-		}
-	case "json":
-		switch v := i.(type) {
-		case []byte:
-			return x.JSONBlob(code, v)
-		case BytesGetter:
-			return x.JSONBlob(code, v.Bytes())
-		default:
-			return x.JSON(code, i)
-		}
-	case "jsonp":
-		callback := "jsonp"
-		qs := x.QueryParams()
-		for _, name := range x.slim.JSONPCallbacks {
-			if cb := qs.Get(name); cb != "" {
-				callback = cb
-				break
-			}
-		}
-		switch v := i.(type) {
-		case []byte:
-			return x.JSONPBlob(code, callback, v)
-		case BytesGetter:
-			return x.JSONPBlob(code, callback, v.Bytes())
-		default:
-			return x.JSONP(code, callback, i)
-		}
-	case "xml":
-		switch v := i.(type) {
-		case []byte:
-			return x.XMLBlob(code, v)
-		case BytesGetter:
-			return x.XMLBlob(code, v.Bytes())
-		default:
-			return x.XML(code, i)
-		}
-	case "text", "text/*":
-		switch v := i.(type) {
-		case string:
-			return x.String(code, v)
-		case []byte:
-			return x.Blob(code, MIMETextPlainCharsetUTF8, v)
-		case BytesGetter:
-			return x.Blob(code, MIMETextPlainCharsetUTF8, v.Bytes())
-		case fmt.Stringer:
-			return x.String(code, v.String())
-		default:
-			return x.String(code, fmt.Sprintf("%v", i))
-		}
-	}
-	switch v := i.(type) {
-	case string:
-		return x.String(code, v)
-	case []byte:
-		return x.Blob(code, "", v)
-	case json.Marshaler:
-		buf := &bytes.Buffer{}
-		err := x.slim.JSONSerializer.Serialize(buf, v, "")
-		if err != nil {
-			return err
-		}
-		return x.JSONBlob(code, buf.Bytes())
-	case xml.Marshaler:
-		buf := &bytes.Buffer{}
-		err := x.slim.XMLSerializer.Serialize(buf, v, "")
-		if err != nil {
-			return err
-		}
-		return x.XMLBlob(code, buf.Bytes())
-	case BytesGetter:
-		return x.Blob(code, "", v.Bytes())
-	case fmt.Stringer:
-		return x.String(code, v.String())
-	default:
-		return x.Blob(code, "", []byte(fmt.Sprintf("%v", i)))
-	}
-}
-
 // Redirect redirects the request to a provided URL with status code.
 func (x *context) Redirect(code int, location string) error {
 	if code < 300 || code > 308 {
@@ -843,45 +749,7 @@ func (x *context) Redirect(code int, location string) error {
 // Error invokes the registered HTTP error handler.
 // NB: Avoid using this method. It is better to return errors, so middlewares up in chain could act on returned error.
 func (x *context) Error(err error) {
-	if x.slim.ErrorHandler != nil {
-		x.slim.ErrorHandler(x, err)
-		return
-	}
-	if x.Written() {
-		//x.Logger().Error(err.Error())
-		// TODO(hupeh): logger the error
-		return
-	}
-	he := &HTTPError{
-		StatusCode: http.StatusInternalServerError,
-		Message:    http.StatusText(http.StatusInternalServerError),
-	}
-	if errors.As(err, &he) {
-		if he.Internal != nil {
-			// max 2 levels of checks even if internal could have also internal
-			errors.As(he.Internal, &he)
-		}
-	}
-	code := he.StatusCode
-	message := he.Message
-	if m, ok := he.Message.(string); ok {
-		if x.slim.Debug {
-			message = Map{"message": m, "error": err.Error()}
-		} else {
-			message = Map{"message": m}
-		}
-	}
-	// Send response
-	var cErr error
-	if x.Request().Method == http.MethodHead { // Issue #608
-		cErr = x.NoContent(he.StatusCode)
-	} else {
-		cErr = x.Respond(code, message)
-	}
-	if cErr != nil {
-		// truly rare case. ala client already disconnected
-		//x.slim.Logger.Error(err)
-	}
+	x.slim.ErrorHandler(x, err)
 }
 
 func (x *context) Slim() *Slim {
