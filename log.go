@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -166,9 +168,60 @@ func (l *logger) log(level string, format string, args ...any) {
 	}
 	fmt.Fprintf(
 		l.Output(),
-		"%s | %-5s| %s\n",
+		"%s | %-5s | %s\n",
 		time.Now().Format("2006-01-02 15:04:05.000"),
 		level,
 		strings.TrimSpace(message),
 	)
+}
+
+type LoggingConfig struct {
+	Colorful bool
+}
+
+func Logging() MiddlewareFunc {
+	return (LoggingConfig{
+		Colorful: runtime.GOOS != "windows",
+	}).ToMiddleware()
+}
+
+func (l LoggingConfig) ToMiddleware() MiddlewareFunc {
+	return func(c Context, next HandlerFunc) (err error) {
+		start := time.Now()
+		c.Logger().Infof("Started %s %s for %s", c.Request().Method, c.RequestURI(), c.RealIP())
+		if err = next(c); err != nil {
+			c.Logger().Error(err)
+		}
+		stop := time.Now()
+		status := c.Response().Status()
+		content := fmt.Sprintf(
+			"Completed %s %s %v %s in %s",
+			c.Request().Method,
+			c.RequestURI(),
+			status,
+			http.StatusText(c.Response().Status()),
+			stop.Sub(start).String(),
+		)
+		if l.Colorful {
+			if status >= 500 {
+				content = fmt.Sprintf("\033[1;36m%s\033[0m", content)
+			} else if status >= 400 {
+				if status == 404 {
+					content = fmt.Sprintf("\033[1;31m%s\033[0m", content)
+				} else {
+					content = fmt.Sprintf("\033[4;31m%s\033[0m", content)
+				}
+			} else if status >= 300 {
+				if status == 304 {
+					content = fmt.Sprintf("\033[1;33m%s\033[0m", content)
+				} else {
+					content = fmt.Sprintf("\033[1;37m%s\033[0m", content)
+				}
+			} else if status >= 200 {
+				content = fmt.Sprintf("\033[1;32m%s\033[0m", content)
+			}
+		}
+		c.Logger().Info(content)
+		return
+	}
 }
