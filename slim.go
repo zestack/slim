@@ -155,6 +155,14 @@ type Slim struct {
 	JSONPCallbacks       []string // jsonp 回调函数
 }
 
+func Classic() *Slim {
+	s := New()
+	s.Use(Logging())
+	s.Use(Recover())
+	s.Use(Static("public"))
+	return s
+}
+
 func New() *Slim {
 	s := &Slim{
 		routers:              make(map[string]Router),
