@@ -5,8 +5,8 @@ import (
 	"runtime"
 )
 
-// RecoverConfig defines the config for Recover middleware.
-type RecoverConfig struct {
+// RecoveryConfig defines the config for Recovery middleware.
+type RecoveryConfig struct {
 	// Size of the stack to be printed.
 	// Optional. Default value 4KB.
 	StackSize int
@@ -19,28 +19,28 @@ type RecoverConfig struct {
 	DisablePrintStack bool
 }
 
-// DefaultRecoverConfig is the default Recover middleware config.
-var DefaultRecoverConfig = RecoverConfig{
+// DefaultRecoveryConfig is the default Recovery middleware config.
+var DefaultRecoveryConfig = RecoveryConfig{
 	StackSize:         4 << 10, // 4 KB
 	DisableStackAll:   false,
 	DisablePrintStack: false,
 }
 
-// Recover returns a middleware which recovers from panics anywhere in the chain
+// Recovery returns a middleware which recovers from panics anywhere in the chain
 // and handles the control to the centralized ErrorHandler.
-func Recover() MiddlewareFunc {
-	return RecoverWithConfig(DefaultRecoverConfig)
+func Recovery() MiddlewareFunc {
+	return RecoveryWithConfig(DefaultRecoveryConfig)
 }
 
-// RecoverWithConfig returns Recovery middleware with config or panics on invalid configuration.
-func RecoverWithConfig(config RecoverConfig) MiddlewareFunc {
+// RecoveryWithConfig returns Recovery middleware with config or panics on invalid configuration.
+func RecoveryWithConfig(config RecoveryConfig) MiddlewareFunc {
 	return config.ToMiddleware()
 }
 
-// ToMiddleware converts RecoverConfig to middleware or returns an error for invalid configuration
-func (config RecoverConfig) ToMiddleware() MiddlewareFunc {
+// ToMiddleware converts RecoveryConfig to middleware or returns an error for invalid configuration
+func (config RecoveryConfig) ToMiddleware() MiddlewareFunc {
 	if config.StackSize == 0 {
-		config.StackSize = DefaultRecoverConfig.StackSize
+		config.StackSize = DefaultRecoveryConfig.StackSize
 	}
 	return func(c Context, next HandlerFunc) (err error) {
 		defer func() {
