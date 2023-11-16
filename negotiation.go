@@ -146,17 +146,9 @@ type Accept struct {
 // AcceptSlice is a slice of accept.
 type AcceptSlice []Accept
 
-// Negotiate returns a type that is accepted by both the header declaration,
-// and the list of types provided.
-// If no common types are found, an empty string is returned.
-func Negotiate(header string, ctypes ...string) (string, error) {
-	s, _, e := newSlice(header, onAcceptParsed).Negotiate(ctypes...)
-	return s, e
-}
-
 func onAcceptParsed(*Accept) {}
 
-// 解析 HTML 的 Accept(-Charset|-Encoding|-Language) 报头，
+// 解析 HTTP 的 Accept(-Charset|-Encoding|-Language) 报头，
 // 返回 AcceptSlice，该结果是根据值的类型和权重因子按照降序排列的，
 // 如果类型一致且权重一致，则使用出场的先后顺序排列。
 //
