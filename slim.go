@@ -100,7 +100,7 @@ const (
 
 const (
 	// Version of Server
-	Version = "0.0.1"
+	Version = "0.0.1-dev"
 	website = "https://slim.zestack.com"
 	// http://patorjk.com/software/taag/#p=display&f=Small%20Slant&t=Echo
 	banner = `
@@ -211,6 +211,10 @@ func New() *Slim {
 	s := &Slim{
 		routers:              make(map[string]Router),
 		negotiator:           NewNegotiator(10, nil),
+		Server:               new(http.Server),
+		TLSServer:            new(http.Server),
+		AutoTLSManager:       autocert.Manager{Prompt: autocert.AcceptTOS},
+		ListenerNetwork:      "tcp",
 		NewContextFunc:       nil,
 		ErrorHandler:         ErrorHandler,
 		Filesystem:           os.DirFS("."),
@@ -225,6 +229,8 @@ func New() *Slim {
 		PrettyIndent:         "  ",
 		JSONPCallbacks:       []string{"jsonp", "callback"},
 	}
+	s.Server.Handler = s
+	s.TLSServer.Handler = s
 	s.router = s.NewRouter()
 	s.contextPool.New = func() any {
 		if s.NewContextFunc != nil {
@@ -616,7 +622,7 @@ func (s *Slim) StartServer(srv *http.Server) (err error) {
 
 func (s *Slim) configureServer(srv *http.Server) error {
 	// Setup
-	c := color.NewWithOutput(s.Logger.Output())
+	c := newColor(s.Logger.Output())
 	srv.ErrorLog = s.StdLogger
 	srv.Handler = s
 	if s.Debug {
@@ -677,7 +683,7 @@ func (s *Slim) TLSListenerAddr() net.Addr {
 func (s *Slim) StartH2CServer(address string, h2s *http2.Server) error {
 	s.startupMutex.Lock()
 	// Setup
-	c := color.NewWithOutput(s.Logger.Output())
+	c := newColor(s.Logger.Output())
 	srv := s.Server
 	srv.Addr = address
 	srv.ErrorLog = s.StdLogger
@@ -770,6 +776,13 @@ func NotFoundHandler(_ Context) error {
 
 func MethodNotAllowedHandler(_ Context) error {
 	return ErrMethodNotAllowed
+}
+
+func newColor(w io.Writer) *color.Color {
+	if ww, ok := w.(*log.Writer); ok {
+		return ww.Color
+	}
+	return color.NewWithOutput(w)
 }
 
 // tcpKeepAliveListener sets TCP keep-alive timeouts on accepted

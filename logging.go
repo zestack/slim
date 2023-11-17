@@ -58,13 +58,13 @@ func (config LoggingConfig) ToMiddleware() MiddlewareFunc {
 		if !config.DisableRequestID {
 			l = l.With(log.String("id", config.RequestIDGenerator(c)))
 		}
+		l.Print("Started %s %s for %s", c.Request().Method, c.RequestURI(), c.RealIP())
 		ctx := stdctx.WithValue(c.Context(), "logger", l)
 		if len(config.ForkedPrefixes) > 0 {
 			for key, prefix := range config.ForkedPrefixes {
 				ctx = stdctx.WithValue(ctx, key, l.WithPrefix(prefix))
 			}
 		}
-		l.Infof("Started %s %s for %s", c.Request().Method, c.RequestURI(), c.RealIP())
 		c.SetRequest(c.Request().WithContext(ctx))
 		c.SetLogger(l)
 		if err = next(c); err != nil {
@@ -80,23 +80,19 @@ func (config LoggingConfig) ToMiddleware() MiddlewareFunc {
 			http.StatusText(c.Response().Status()),
 			stop.Sub(start).String(),
 		)
-		if w, ok := l.Output().(*log.Writer); !ok && w.IsColorful() {
-			if status >= 500 {
-				content = color.Cyan(content)
-			} else if status >= 400 {
-				if status == 404 {
-					content = color.Yellow(content)
-				} else {
-					content = color.Red(content)
-				}
-			} else if status >= 300 {
-				if status == 304 {
-					content = color.Yellow(content)
-				} else {
-					content = color.White(content)
-				}
-			} else if status >= 200 {
-				content = color.Green(content)
+		if status >= 500 {
+			content = color.Cyan(content)
+		} else if status >= 400 {
+			if status == 404 {
+				content = color.Yellow(content)
+			} else {
+				content = color.Red(content)
+			}
+		} else if status >= 300 {
+			if status == 304 {
+				content = color.Yellow(content)
+			} else {
+				content = color.White(content)
 			}
 		}
 		l.Print(content)
