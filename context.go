@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"zestack.dev/log"
 )
 
 // Context represents the context of the current HTTP request. It holds request and
@@ -33,9 +35,9 @@ type Context interface {
 	// SetResponse sets `slim.ResponseWriter`.
 	SetResponse(r ResponseWriter)
 	// Logger returns the `Logger` instance.
-	Logger() Logger
+	Logger() log.Logger
 	// SetLogger Set the logger
-	SetLogger(logger Logger)
+	SetLogger(logger log.Logger)
 	// Filesystem returns `fs.FS`.
 	Filesystem() fs.FS
 	// SetFilesystem sets `fs.FS`
@@ -48,7 +50,7 @@ type Context interface {
 	Scheme() string
 	// RealIP returns the client's network address based on `X-Forwarded-For`
 	// or `X-Real-IP` request header.
-	// The behavior can be configured using `Echo#IPExtractor`.
+	// The behavior can be configured using `Slim#IPExtractor`.
 	RealIP() string
 	RequestURI() string
 	// Accepts 返回支持的权重最高的媒体类型，若匹配失败则会返回空字符串。
@@ -111,12 +113,12 @@ type Context interface {
 	// does it based on Content-Type header.
 	Bind(i any) error
 	// Validate validates provided `i`. It is usually called after `Context#Bind()`.
-	// Validator must be registered using `Echo#Validator`.
+	// Validator must be registered using `Slim#Validator`.
 	Validate(i any) error
 	// Written returns whether the context response has been written to
 	Written() bool
 	// Render renders a template with data and sends a text/html response with status
-	// code. Renderer must be registered using `Echo.Renderer`.
+	// code. Renderer must be registered using `Slim.Renderer`.
 	Render(code int, name string, data any) error
 	// HTML sends an HTTP response with status code.
 	HTML(code int, html string) error
@@ -176,8 +178,8 @@ type EditableContext interface {
 	// SetRouteInfo sets the route info of this request to the context.
 	SetRouteInfo(ri RouteInfo)
 	// Reset resets the context after request completes. It must be called along
-	// with `Echo#AcquireContext()` and `Echo#ReleaseContext()`.
-	// See `Echo#ServeHTTP()`
+	// with `Slim#AcquireContext()` and `Slim#ReleaseContext()`.
+	// See `Slim#ServeHTTP()`
 	Reset(w http.ResponseWriter, r *http.Request)
 }
 
@@ -195,13 +197,13 @@ type context struct {
 	route         RouteInfo
 	filesystem    fs.FS
 	// pathParams holds path/uri parameters determined by Router.
-	// The Lifecycle is handled by Echo to reduce allocations.
+	// The Lifecycle is handled by Slim to reduce allocations.
 	pathParams *PathParams
-	// currentParams hold path parameters set by non-Echo implementation (custom middlewares, handlers) during the lifetime of Request.
-	// Lifecycle is not handle by Echo and could have excess allocations per served Request
+	// currentParams hold path parameters set by non-Slim implementation (custom middlewares, handlers) during the lifetime of Request.
+	// Lifecycle is not handle by Slim and could have excess allocations per served Request
 	currentParams PathParams
 	negotiator    *Negotiator
-	logger        Logger
+	logger        log.Logger
 	query         url.Values
 	store         map[string]any
 	slim          *Slim
@@ -250,7 +252,7 @@ func (x *context) SetResponse(w ResponseWriter) {
 	x.response = w
 }
 
-func (x *context) Logger() Logger {
+func (x *context) Logger() log.Logger {
 	if x.logger != nil {
 		return x.logger
 	}
@@ -260,7 +262,7 @@ func (x *context) Logger() Logger {
 	return x.slim.Logger
 }
 
-func (x *context) SetLogger(l Logger) {
+func (x *context) SetLogger(l log.Logger) {
 	x.logger = l
 }
 
@@ -515,7 +517,7 @@ func (x *context) Bind(i any) error {
 }
 
 // Validate validates provided `i`. It is usually called after `Context#Bind()`.
-// Validator must be registered using `Echo#Validator`.
+// Validator must be registered using `Slim#Validator`.
 func (x *context) Validate(i any) error {
 	if x.slim.Validator == nil {
 		return ErrValidatorNotRegistered
@@ -546,7 +548,7 @@ func (x *context) prettyIndent() string {
 }
 
 // Render renders a template with data and sends a text/html response with status
-// code. Renderer must be registered using `Echo.Renderer`.
+// code. Renderer must be registered using `Slim.Renderer`.
 func (x *context) Render(code int, name string, data any) error {
 	if x.slim.Renderer == nil {
 		return ErrRendererNotRegistered
