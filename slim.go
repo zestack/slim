@@ -1,13 +1,25 @@
 package slim
 
 import (
+	stdctx "context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"io/fs"
+	stdLog "log"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"time"
+
+	"golang.org/x/crypto/acme"
+	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"zestack.dev/color"
+	"zestack.dev/log"
 )
 
 // MIME types
@@ -67,7 +79,6 @@ const (
 	HeaderCacheControl        = "Cache-Control"
 	HeaderConnection          = "Connection"
 
-	// Access control
 	HeaderAccessControlRequestMethod    = "Access-Control-Request-Method"
 	HeaderAccessControlRequestHeaders   = "Access-Control-Request-Headers"
 	HeaderAccessControlAllowOrigin      = "Access-Control-Allow-Origin"
@@ -77,7 +88,6 @@ const (
 	HeaderAccessControlExposeHeaders    = "Access-Control-Expose-Headers"
 	HeaderAccessControlMaxAge           = "Access-Control-Max-Age"
 
-	// Security
 	HeaderStrictTransportSecurity         = "Strict-Transport-Security"
 	HeaderXContentTypeOptions             = "X-Content-Type-Config"
 	HeaderXXSSProtection                  = "X-XSS-Protection"
@@ -86,6 +96,25 @@ const (
 	HeaderContentSecurityPolicyReportOnly = "Content-Security-Policy-Report-Only"
 	HeaderXCSRFToken                      = "X-CSRF-Token"
 	HeaderReferrerPolicy                  = "Referrer-Policy"
+)
+
+const (
+	// Version of Server
+	Version = "0.0.1"
+	website = "https://slim.zestack.com"
+	// http://patorjk.com/software/taag/#p=display&f=Small%20Slant&t=Echo
+	banner = `
+ .--,       .--,
+( (  \.---./  ) )
+ '.__/o   o\__.'
+    {=  ^  =}
+     >  -  <
+_____________________________________________
+High performance, minimalist Go web framework
+version: %s
+website: %s
+_____________________________________________
+`
 )
 
 // HandlerFunc HTTP请求处理函数签名
@@ -112,6 +141,7 @@ type MiddlewareComposer interface {
 }
 
 type MiddlewareConfigurator interface {
+	// ToMiddleware 将实例转换成中间件函数
 	ToMiddleware() MiddlewareFunc
 }
 
@@ -129,6 +159,10 @@ type Validator interface {
 type Map map[string]any
 
 type Slim struct {
+	// startupMutex is mutex to lock Server instance access during server configuration and startup. Useful for to get
+	// listener address info (on which interface/port was listener bound) without having data races.
+	startupMutex sync.RWMutex
+
 	middleware []MiddlewareFunc
 
 	router        Router
@@ -148,7 +182,17 @@ type Slim struct {
 	Renderer             Renderer // 自定义错误处理函数
 	JSONSerializer       Serializer
 	XMLSerializer        Serializer
-	Logger               Logger
+	Logger               log.Logger
+	Server               *http.Server
+	TLSServer            *http.Server
+	Listener             net.Listener
+	TLSListener          net.Listener
+	StdLogger            *stdLog.Logger
+	AutoTLSManager       autocert.Manager
+	DisableHTTP2         bool
+	HideBanner           bool
+	HidePort             bool
+	ListenerNetwork      string
 	Debug                bool     // 是否开启调试模式
 	MultipartMemoryLimit int64    // 文件上传大小限制
 	PrettyIndent         string   // json/xml 格式化缩进
@@ -158,7 +202,7 @@ type Slim struct {
 func Classic() *Slim {
 	s := New()
 	s.Use(Logging())
-	s.Use(Recover())
+	s.Use(Recovery())
 	s.Use(Static("public"))
 	return s
 }
@@ -175,7 +219,7 @@ func New() *Slim {
 		Renderer:             nil,
 		JSONSerializer:       &JSONSerializer{},
 		XMLSerializer:        &XMLSerializer{},
-		Logger:               NewLogger(),
+		Logger:               log.WithPrefix(""),
 		Debug:                true,
 		MultipartMemoryLimit: 32 << 20, // 32 MB
 		PrettyIndent:         "  ",
@@ -252,6 +296,94 @@ func (s *Slim) Host(name string, middleware ...MiddlewareFunc) Router {
 	router.Use(middleware...)
 	s.routers[name] = router
 	return router
+}
+
+// Group 实现路由分组注册，实际调用 `RouteCollector.Route` 实现
+func (s *Slim) Group(fn func(sub RouteCollector)) {
+	s.router.Group(fn)
+}
+
+// Route 以指定前缀实现路由分组注册
+func (s *Slim) Route(prefix string, fn func(sub RouteCollector)) {
+	s.router.Route(prefix, fn)
+}
+
+// Some registers a new route for multiple HTTP methods and path with matching
+// handler in the router. Panics on error.
+func (s *Slim) Some(methods []string, pattern string, h HandlerFunc) Route {
+	return s.router.Some(methods, pattern, h)
+}
+
+// Any registers a new route for all supported HTTP methods and path with matching
+// handler in the router. Panics on error.
+func (s *Slim) Any(pattern string, h HandlerFunc) Route {
+	return s.router.Any(pattern, h)
+}
+
+// CONNECT registers a new CONNECT route for a path with matching handler in the
+// router with optional route-level middleware.
+func (s *Slim) CONNECT(path string, h HandlerFunc) Route {
+	return s.router.CONNECT(path, h)
+}
+
+// DELETE registers a new DELETE route for a path with matching handler in the router
+// with optional route-level middleware.
+func (s *Slim) DELETE(path string, h HandlerFunc) Route {
+	return s.router.DELETE(path, h)
+}
+
+// GET registers a new GET route for a path with matching handler in the router
+// with optional route-level middleware.
+func (s *Slim) GET(path string, h HandlerFunc) Route {
+	return s.router.GET(path, h)
+}
+
+// HEAD registers a new HEAD route for a path with matching handler in the
+// router with optional route-level middleware.
+func (s *Slim) HEAD(path string, h HandlerFunc) Route {
+	return s.router.HEAD(path, h)
+}
+
+// OPTIONS registers a new OPTIONS route for a path with matching handler in the
+// router with optional route-level middleware.
+func (s *Slim) OPTIONS(path string, h HandlerFunc) Route {
+	return s.router.OPTIONS(path, h)
+}
+
+// PATCH registers a new PATCH route for a path with matching handler in the
+// router with optional route-level middleware.
+func (s *Slim) PATCH(path string, h HandlerFunc) Route {
+	return s.router.PATCH(path, h)
+}
+
+// POST registers a new POST route for a path with matching handler in the
+// router with optional route-level middleware.
+func (s *Slim) POST(path string, h HandlerFunc) Route {
+	return s.router.POST(path, h)
+}
+
+// PUT registers a new PUT route for a path with matching handler in the
+// router with optional route-level middleware.
+func (s *Slim) PUT(path string, h HandlerFunc) Route {
+	return s.router.PUT(path, h)
+}
+
+// TRACE registers a new TRACE route for a path with matching handler in the
+// router with optional route-level middleware.
+func (s *Slim) TRACE(path string, h HandlerFunc) Route {
+	return s.router.TRACE(path, h)
+}
+
+// Static registers a new route with path prefix to serve static files
+// from the provided root directory. Panics on error.
+func (s *Slim) Static(prefix, root string) Route {
+	return s.router.Static(prefix, root)
+}
+
+// File registers a new route with a path to serve a static file.
+// Panics on error.
+func (s *Slim) File(path, file string) Route {
+	return s.router.File(path, file)
 }
 
 // Negotiator 返回内容协商工具
@@ -385,6 +517,236 @@ func (s *Slim) handleError(c Context, err error) {
 	c.Error(err)
 }
 
+// Start starts an HTTP server.
+func (s *Slim) Start(address string) error {
+	s.startupMutex.Lock()
+	s.Server.Addr = address
+	if err := s.configureServer(s.Server); err != nil {
+		s.startupMutex.Unlock()
+		return err
+	}
+	s.startupMutex.Unlock()
+	return s.Server.Serve(s.Listener)
+}
+
+// StartTLS starts an HTTPS server.
+// If `certFile` or `keyFile` is `string`, the values are treated as file paths.
+// If `certFile` or `keyFile` is `[]byte`, the values are treated as the certificate or key as-is.
+func (s *Slim) StartTLS(address string, certFile, keyFile interface{}) (err error) {
+	s.startupMutex.Lock()
+	var cert []byte
+	if cert, err = filepathOrContent(certFile); err != nil {
+		s.startupMutex.Unlock()
+		return
+	}
+
+	var key []byte
+	if key, err = filepathOrContent(keyFile); err != nil {
+		s.startupMutex.Unlock()
+		return
+	}
+
+	srv := s.TLSServer
+	srv.TLSConfig = new(tls.Config)
+	srv.TLSConfig.Certificates = make([]tls.Certificate, 1)
+	if srv.TLSConfig.Certificates[0], err = tls.X509KeyPair(cert, key); err != nil {
+		s.startupMutex.Unlock()
+		return
+	}
+
+	s.configureTLS(address)
+	if err := s.configureServer(srv); err != nil {
+		s.startupMutex.Unlock()
+		return err
+	}
+	s.startupMutex.Unlock()
+	return srv.Serve(s.TLSListener)
+}
+
+func filepathOrContent(fileOrContent interface{}) (content []byte, err error) {
+	switch v := fileOrContent.(type) {
+	case string:
+		return os.ReadFile(v)
+	case []byte:
+		return v, nil
+	default:
+		return nil, ErrInvalidCertOrKeyType
+	}
+}
+
+// StartAutoTLS starts an HTTPS server using certificates automatically installed from https://letsencrypt.org.
+func (s *Slim) StartAutoTLS(address string) error {
+	s.startupMutex.Lock()
+	srv := s.TLSServer
+	srv.TLSConfig = new(tls.Config)
+	srv.TLSConfig.GetCertificate = s.AutoTLSManager.GetCertificate
+	srv.TLSConfig.NextProtos = append(srv.TLSConfig.NextProtos, acme.ALPNProto)
+
+	s.configureTLS(address)
+	if err := s.configureServer(srv); err != nil {
+		s.startupMutex.Unlock()
+		return err
+	}
+	s.startupMutex.Unlock()
+	return srv.Serve(s.TLSListener)
+}
+
+func (s *Slim) configureTLS(address string) {
+	srv := s.TLSServer
+	srv.Addr = address
+	if !s.DisableHTTP2 {
+		srv.TLSConfig.NextProtos = append(srv.TLSConfig.NextProtos, "h2")
+	}
+}
+
+// StartServer starts a custom http server.
+func (s *Slim) StartServer(srv *http.Server) (err error) {
+	s.startupMutex.Lock()
+	if err := s.configureServer(srv); err != nil {
+		s.startupMutex.Unlock()
+		return err
+	}
+	if srv.TLSConfig != nil {
+		s.startupMutex.Unlock()
+		return srv.Serve(s.TLSListener)
+	}
+	s.startupMutex.Unlock()
+	return srv.Serve(s.Listener)
+}
+
+func (s *Slim) configureServer(srv *http.Server) error {
+	// Setup
+	c := color.NewWithOutput(s.Logger.Output())
+	srv.ErrorLog = s.StdLogger
+	srv.Handler = s
+	if s.Debug {
+		s.Logger.SetLevel(log.LevelDebug)
+	}
+
+	if !s.HideBanner {
+		c.Printf(banner, c.Red("v"+Version), c.Blue(website))
+	}
+
+	if srv.TLSConfig == nil {
+		if s.Listener == nil {
+			l, err := newListener(srv.Addr, s.ListenerNetwork)
+			if err != nil {
+				return err
+			}
+			s.Listener = l
+		}
+		if !s.HidePort {
+			c.Printf("⇨ http server started on %s\n", c.Green(s.Listener.Addr()))
+		}
+		return nil
+	}
+	if s.TLSListener == nil {
+		l, err := newListener(srv.Addr, s.ListenerNetwork)
+		if err != nil {
+			return err
+		}
+		s.TLSListener = tls.NewListener(l, srv.TLSConfig)
+	}
+	if !s.HidePort {
+		c.Printf("⇨ https server started on %s\n", c.Green(s.TLSListener.Addr()))
+	}
+	return nil
+}
+
+// ListenerAddr returns net.Addr for Listener
+func (s *Slim) ListenerAddr() net.Addr {
+	s.startupMutex.RLock()
+	defer s.startupMutex.RUnlock()
+	if s.Listener == nil {
+		return nil
+	}
+	return s.Listener.Addr()
+}
+
+// TLSListenerAddr returns net.Addr for TLSListener
+func (s *Slim) TLSListenerAddr() net.Addr {
+	s.startupMutex.RLock()
+	defer s.startupMutex.RUnlock()
+	if s.TLSListener == nil {
+		return nil
+	}
+	return s.TLSListener.Addr()
+}
+
+// StartH2CServer starts a custom http/2 server with h2c (HTTP/2 Cleartext).
+func (s *Slim) StartH2CServer(address string, h2s *http2.Server) error {
+	s.startupMutex.Lock()
+	// Setup
+	c := color.NewWithOutput(s.Logger.Output())
+	srv := s.Server
+	srv.Addr = address
+	srv.ErrorLog = s.StdLogger
+	srv.Handler = h2c.NewHandler(s, h2s)
+	if s.Debug {
+		s.Logger.SetLevel(log.LevelDebug)
+	}
+
+	if !s.HideBanner {
+		c.Printf(banner, c.Red("v"+Version), c.Blue(website))
+	}
+
+	if s.Listener == nil {
+		l, err := newListener(srv.Addr, s.ListenerNetwork)
+		if err != nil {
+			s.startupMutex.Unlock()
+			return err
+		}
+		s.Listener = l
+	}
+	if !s.HidePort {
+		c.Printf("⇨ http server started on %s\n", c.Green(s.Listener.Addr()))
+	}
+	s.startupMutex.Unlock()
+	return srv.Serve(s.Listener)
+}
+
+// Close immediately stops the server.
+// It internally calls `http.Server#Close()`.
+func (s *Slim) Close() error {
+	s.startupMutex.Lock()
+	defer s.startupMutex.Unlock()
+	if err := s.TLSServer.Close(); err != nil {
+		return err
+	}
+	return s.Server.Close()
+}
+
+// Shutdown stops the server gracefully.
+// It internally calls `http.Server#Shutdown()`.
+func (s *Slim) Shutdown(ctx stdctx.Context) error {
+	s.startupMutex.Lock()
+	defer s.startupMutex.Unlock()
+	if err := s.TLSServer.Shutdown(ctx); err != nil {
+		return err
+	}
+	return s.Server.Shutdown(ctx)
+}
+
+// WrapHandler wraps `http.Handler` into `echo.HandlerFunc`.
+func WrapHandler(h http.Handler) HandlerFunc {
+	return func(c Context) error {
+		h.ServeHTTP(c.Response(), c.Request())
+		return nil
+	}
+}
+
+// WrapMiddleware wraps `func(http.Handler) http.Handler` into `echo.MiddlewareFunc`
+func WrapMiddleware(m func(http.Handler) http.Handler) MiddlewareFunc {
+	return func(c Context, next HandlerFunc) (err error) {
+		m(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c.SetRequest(r)
+			c.SetResponse(NewResponseWriter(r.Method, w))
+			err = next(c)
+		})).ServeHTTP(c.Response(), c.Request())
+		return
+	}
+}
+
 // ErrorHandler 默认错误处理函数
 func ErrorHandler(c Context, err error) {
 	if c.Written() {
@@ -408,4 +770,35 @@ func NotFoundHandler(_ Context) error {
 
 func MethodNotAllowedHandler(_ Context) error {
 	return ErrMethodNotAllowed
+}
+
+// tcpKeepAliveListener sets TCP keep-alive timeouts on accepted
+// connections. It's used by ListenAndServe and ListenAndServeTLS so
+// dead TCP connections (e.g., closing laptop mid-download) eventually
+// go away.
+type tcpKeepAliveListener struct {
+	*net.TCPListener
+}
+
+func (ln tcpKeepAliveListener) Accept() (c net.Conn, err error) {
+	if c, err = ln.AcceptTCP(); err != nil {
+		return
+	} else if err = c.(*net.TCPConn).SetKeepAlive(true); err != nil {
+		return
+	}
+	// Ignore error from setting the KeepAlivePeriod as some systems, such as
+	// OpenBSD, do not support setting TCP_USER_TIMEOUT on IPPROTO_TCP
+	_ = c.(*net.TCPConn).SetKeepAlivePeriod(3 * time.Minute)
+	return
+}
+
+func newListener(address, network string) (*tcpKeepAliveListener, error) {
+	if network != "tcp" && network != "tcp4" && network != "tcp6" {
+		return nil, ErrInvalidListenerNetwork
+	}
+	l, err := net.Listen(network, address)
+	if err != nil {
+		return nil, err
+	}
+	return &tcpKeepAliveListener{l.(*net.TCPListener)}, nil
 }
