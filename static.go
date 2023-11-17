@@ -28,7 +28,7 @@ type StaticConfig struct {
 // Static returns Static middleware to serve static content from the provided
 // root directory.
 func Static(root string) MiddlewareFunc {
-	return StaticConfig{}.ToMiddleware()
+	return StaticConfig{Root: root}.ToMiddleware()
 }
 
 func (config StaticConfig) ToMiddleware() MiddlewareFunc {
