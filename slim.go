@@ -260,11 +260,15 @@ func (s *Slim) NewContext(w http.ResponseWriter, r *http.Request) Context {
 }
 
 func (s *Slim) NewRouter() Router {
+	var r Router
 	if s.routerCreator != nil {
-		return s.routerCreator(s)
+		r = s.routerCreator(s)
+	} else {
+		r = NewRouter(RouterConfig{})
 	}
-	r := NewRouter(RouterConfig{}).(*defaultRouter)
-	r.slim = s
+	if x, ok := r.(*defaultRouter); ok {
+		x.slim = s
+	}
 	return r
 }
 
@@ -287,7 +291,7 @@ func (s *Slim) RouterFor(host string) Router {
 // 注意：会立即重新创建默认路由器，并且 vhost 路由器会被清除。
 func (s *Slim) ResetRouterCreator(creator func(s *Slim) Router) {
 	s.routerCreator = creator
-	s.router = creator(s)
+	s.router = s.NewRouter()
 	clear(s.routers)
 }
 
