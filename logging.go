@@ -58,7 +58,7 @@ func (config LoggingConfig) ToMiddleware() MiddlewareFunc {
 		if !config.DisableRequestID {
 			l = l.With(log.String("id", config.RequestIDGenerator(c)))
 		}
-		l.Print("Started %s %s for %s", c.Request().Method, c.RequestURI(), c.RealIP())
+		l.Printf("Started %s %s for %s", c.Request().Method, c.RequestURI(), c.RealIP())
 		ctx := stdctx.WithValue(c.Context(), "logger", l)
 		if len(config.ForkedPrefixes) > 0 {
 			for key, prefix := range config.ForkedPrefixes {
