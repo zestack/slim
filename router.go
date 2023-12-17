@@ -244,12 +244,11 @@ func (r *defaultRouter) Add(methods []string, pattern string, h HandlerFunc) (Ro
 	params := make([]string, 0)
 	tail, _ := r.tree.insert(segments, &params, 0)
 	route := &defaultRoute{
-		id:        atomic.AddUint32(&nextRouteId, 1),
-		collector: r.collector,
-		pattern:   strings.Join(segments, ""),
-		methods:   methods,
-		params:    params,
-		handler:   h,
+		id:      atomic.AddUint32(&nextRouteId, 1),
+		pattern: strings.Join(segments, ""),
+		methods: methods,
+		params:  params,
+		handler: h,
 	}
 	for _, method := range methods {
 		if e := tail.leaf.endpoint(method); e != nil {
@@ -531,6 +530,10 @@ func (c *defaultRouteCollector) Some(methods []string, pattern string, h Handler
 	route, err := c.Router().Add(methods, pattern, h)
 	if err != nil {
 		panic(err)
+	}
+	// TODO(hupeh): 需要更加合理的方式设置路由收集器
+	if dr, ok := route.(*defaultRoute); ok {
+		dr.collector = c
 	}
 	return route
 }
