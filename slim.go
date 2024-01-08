@@ -99,11 +99,9 @@ const (
 )
 
 const (
-	// Version of Server
 	Version = "0.0.1-dev"
 	website = "https://slim.zestack.com"
-	// http://patorjk.com/software/taag/#p=display&f=Small%20Slant&t=Echo
-	banner = `
+	banner  = `
  .--,       .--,
 ( (  \.---./  ) )
  '.__/o   o\__.'
@@ -737,7 +735,7 @@ func (s *Slim) Shutdown(ctx stdctx.Context) error {
 	return s.Server.Shutdown(ctx)
 }
 
-// WrapHandler wraps `http.Handler` into `echo.HandlerFunc`.
+// WrapHandler wraps `http.Handler` into `slim.HandlerFunc`.
 func WrapHandler(h http.Handler) HandlerFunc {
 	return func(c Context) error {
 		h.ServeHTTP(c.Response(), c.Request())
@@ -745,7 +743,7 @@ func WrapHandler(h http.Handler) HandlerFunc {
 	}
 }
 
-// WrapMiddleware wraps `func(http.Handler) http.Handler` into `echo.MiddlewareFunc`
+// WrapMiddleware wraps `func(http.Handler) http.Handler` into `slim.MiddlewareFunc`
 func WrapMiddleware(m func(http.Handler) http.Handler) MiddlewareFunc {
 	return func(c Context, next HandlerFunc) (err error) {
 		m(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -754,6 +752,15 @@ func WrapMiddleware(m func(http.Handler) http.Handler) MiddlewareFunc {
 			err = next(c)
 		})).ServeHTTP(c.Response(), c.Request())
 		return
+	}
+}
+
+func Tap(h HandlerFunc, mw ...MiddlewareFunc) HandlerFunc {
+	if len(mw) == 0 {
+		return h
+	}
+	return func(c Context) error {
+		return Compose(mw...)(c, h)
 	}
 }
 

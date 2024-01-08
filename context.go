@@ -220,7 +220,7 @@ func (x *context) Reset(w http.ResponseWriter, r *http.Request) {
 	x.allowsMethods = x.allowsMethods[:0]
 	x.route = nil
 	x.filesystem = nil
-	// NOTE: Don't reset because it has to have length c.echo.contextPathParamAllocSize at all times
+	// NOTE: Don't reset because it has to have length c.slim.contextPathParamAllocSize at all times
 	*x.pathParams = (*x.pathParams)[:0]
 	x.currentParams = nil
 	x.logger = nil
@@ -312,8 +312,8 @@ func (x *context) Scheme() string {
 }
 
 func (x *context) RealIP() string {
-	//if x.echo != nil && x.echo.IPExtractor != nil {
-	//	return x.echo.IPExtractor(x.request)
+	//if x.slim != nil && x.slim.IPExtractor != nil {
+	//	return x.slim.IPExtractor(x.request)
 	//}
 	// Fall back to legacy behavior
 	if ip := x.request.Header.Get(HeaderXForwardedFor); ip != "" {
