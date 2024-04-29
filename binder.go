@@ -58,7 +58,7 @@ func BindBody(c Context, i any) (err error) {
 	if req.ContentLength == 0 {
 		return
 	}
-	switch c.Accepts("json", "xml", "form") {
+	switch c.Is("json", "xml", "form") {
 	case "json":
 		if err = c.Slim().JSONSerializer.Deserialize(c.Request().Body, i); err != nil {
 			if he, ok := err.(*HTTPError); ok {

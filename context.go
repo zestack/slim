@@ -53,6 +53,7 @@ type Context interface {
 	// The behavior can be configured using `Slim#IPExtractor`.
 	RealIP() string
 	RequestURI() string
+	Is(types ...string) string
 	// Accepts 返回支持的权重最高的媒体类型，若匹配失败则会返回空字符串。
 	// 给出的值可以是标准的媒体类型（如 application/json），也可以是扩展名（如 json、xml 等）。
 	Accepts(expect ...string) string
@@ -332,6 +333,11 @@ func (x *context) RealIP() string {
 
 func (x *context) RequestURI() string {
 	return x.request.RequestURI
+}
+
+func (x *context) Is(types ...string) string {
+	typ, _ := typeis(x.Header("Content-Type"), types...)
+	return typ
 }
 
 func (x *context) Accepts(expect ...string) string {

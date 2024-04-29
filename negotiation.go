@@ -98,6 +98,8 @@ func (n *Negotiator) Type(r *http.Request, types ...string) string {
 		switch typ {
 		case "jsonp":
 			ctypes = append(ctypes, MIMEApplicationJavaScript)
+		case "json":
+			ctypes = append(ctypes, MIMEApplicationJSON)
 		case "xml":
 			keys = append(keys, typ[:])
 			ctypes = append(ctypes, MIMEApplicationXML, MIMETextXML)
