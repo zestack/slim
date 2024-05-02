@@ -2,12 +2,11 @@ package slim
 
 import (
 	stdctx "context"
-	"fmt"
 	"net/http"
 	"time"
+	"zestack.dev/color"
 
 	"github.com/rs/xid"
-	"zestack.dev/color"
 	"zestack.dev/log"
 )
 
@@ -16,16 +15,6 @@ type LoggingConfig struct {
 	DisableRequestID bool
 	// RequestIDGenerator 请求 ID 生成器
 	RequestIDGenerator func(c Context) string
-	// ForkedPrefixes 自定义的关联前缀的日志实例到请求上下文中，比如：
-	//
-	//   LoggingConfig{
-	//     DisableRequestID: map[string]string{
-	//       "db:logger":    "db",    // 将数据库操作与请求关联
-	//       "redis:logger": "redis", // 将 redis 操作与请求关联
-	//       //...其它关联
-	//     }
-	//   }
-	ForkedPrefixes map[string]string
 }
 
 func Logging() MiddlewareFunc {
@@ -58,13 +47,8 @@ func (config LoggingConfig) ToMiddleware() MiddlewareFunc {
 		if !config.DisableRequestID {
 			l = l.With(log.String("id", config.RequestIDGenerator(c)))
 		}
-		l.Printf("Started %s %s for %s", c.Request().Method, c.RequestURI(), c.RealIP())
+		l.Trace("Started %s %s for %s", c.Request().Method, c.RequestURI(), c.RealIP())
 		ctx := stdctx.WithValue(c.Context(), "logger", l)
-		if len(config.ForkedPrefixes) > 0 {
-			for key, prefix := range config.ForkedPrefixes {
-				ctx = stdctx.WithValue(ctx, key, l.WithPrefix(prefix))
-			}
-		}
 		c.SetRequest(c.Request().WithContext(ctx))
 		c.SetLogger(l)
 		if err = next(c); err != nil {
@@ -72,30 +56,33 @@ func (config LoggingConfig) ToMiddleware() MiddlewareFunc {
 		}
 		stop := time.Now()
 		status := c.Response().Status()
-		content := fmt.Sprintf(
-			"Completed %s %s %v %s in %s",
-			c.Request().Method,
-			c.RequestURI(),
-			status,
-			http.StatusText(c.Response().Status()),
-			stop.Sub(start).String(),
-		)
+		var coloredStatus any
 		if status >= 500 {
-			content = color.Cyan(content)
+			coloredStatus = color.NewValue(status, color.FgCyan)
 		} else if status >= 400 {
 			if status == 404 {
-				content = color.Yellow(content)
+				coloredStatus = color.NewValue(status, color.FgYellow)
 			} else {
-				content = color.Red(content)
+				coloredStatus = color.NewValue(status, color.FgRed)
 			}
 		} else if status >= 300 {
 			if status == 304 {
-				content = color.Yellow(content)
+				coloredStatus = color.NewValue(status, color.FgYellow)
 			} else {
-				content = color.White(content)
+				coloredStatus = color.NewValue(status, color.FgWhite)
 			}
+		} else {
+			coloredStatus = color.NewValue(status, color.FgGreen)
 		}
-		l.Print(content)
+
+		l.Trace(
+			"Completed %s %s %v %s in %s",
+			c.Request().Method,
+			c.RequestURI(),
+			coloredStatus,
+			http.StatusText(c.Response().Status()),
+			stop.Sub(start).String(),
+		)
 		return
 	}
 }

@@ -4,6 +4,7 @@ import (
 	stdctx "context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	stdLog "log"
@@ -221,7 +222,7 @@ func New() *Slim {
 		Renderer:             nil,
 		JSONSerializer:       &JSONSerializer{},
 		XMLSerializer:        &XMLSerializer{},
-		Logger:               log.WithPrefix(""),
+		Logger:               log.Default(),
 		Debug:                true,
 		MultipartMemoryLimit: 32 << 20, // 32 MB
 		PrettyIndent:         "  ",
@@ -624,15 +625,15 @@ func (s *Slim) StartServer(srv *http.Server) (err error) {
 
 func (s *Slim) configureServer(srv *http.Server) error {
 	// Setup
-	c := newColor(s.Logger.Output())
+	l := getColorWriter(s.Logger.Output())
 	srv.ErrorLog = s.StdLogger
 	srv.Handler = s
-	if s.Debug {
+	if s.Debug && !s.Logger.Enabled(nil, log.LevelDebug) {
 		s.Logger.SetLevel(log.LevelDebug)
 	}
 
 	if !s.HideBanner {
-		c.Printf(banner, c.Red("v"+Version), c.Blue(website))
+		fmt.Fprintf(l, banner, color.NewValue("v"+Version, color.FgHiRed), color.NewValue(website, color.FgHiBlue))
 	}
 
 	if srv.TLSConfig == nil {
@@ -644,7 +645,7 @@ func (s *Slim) configureServer(srv *http.Server) error {
 			s.Listener = l
 		}
 		if !s.HidePort {
-			c.Printf("⇨ http server started on %s\n", c.Green(s.Listener.Addr()))
+			fmt.Fprintf(l, "⇨ http server started on %s\n", color.NewValue(s.Listener.Addr(), color.FgHiGreen))
 		}
 		return nil
 	}
@@ -656,7 +657,7 @@ func (s *Slim) configureServer(srv *http.Server) error {
 		s.TLSListener = tls.NewListener(l, srv.TLSConfig)
 	}
 	if !s.HidePort {
-		c.Printf("⇨ https server started on %s\n", c.Green(s.TLSListener.Addr()))
+		fmt.Fprintf(l, "⇨ http server started on %s\n", color.NewValue(s.TLSListener.Addr(), color.FgHiGreen))
 	}
 	return nil
 }
@@ -685,17 +686,17 @@ func (s *Slim) TLSListenerAddr() net.Addr {
 func (s *Slim) StartH2CServer(address string, h2s *http2.Server) error {
 	s.startupMutex.Lock()
 	// Setup
-	c := newColor(s.Logger.Output())
+	l := getColorWriter(s.Logger.Output())
 	srv := s.Server
 	srv.Addr = address
 	srv.ErrorLog = s.StdLogger
 	srv.Handler = h2c.NewHandler(s, h2s)
-	if s.Debug {
+	if s.Debug && !s.Logger.Enabled(nil, log.LevelDebug) {
 		s.Logger.SetLevel(log.LevelDebug)
 	}
 
 	if !s.HideBanner {
-		c.Printf(banner, c.Red("v"+Version), c.Blue(website))
+		fmt.Fprintf(l, banner, color.NewValue("v"+Version, color.FgHiRed), color.NewValue(website, color.FgHiBlue))
 	}
 
 	if s.Listener == nil {
@@ -707,7 +708,7 @@ func (s *Slim) StartH2CServer(address string, h2s *http2.Server) error {
 		s.Listener = l
 	}
 	if !s.HidePort {
-		c.Printf("⇨ http server started on %s\n", c.Green(s.Listener.Addr()))
+		fmt.Fprintf(l, "⇨ http server started on %s\n", color.NewValue(s.Listener.Addr(), color.FgHiGreen))
 	}
 	s.startupMutex.Unlock()
 	return srv.Serve(s.Listener)
@@ -789,11 +790,11 @@ func MethodNotAllowedHandler(_ Context) error {
 	return ErrMethodNotAllowed
 }
 
-func newColor(w io.Writer) *color.Color {
-	if ww, ok := w.(*log.Writer); ok {
-		return ww.Color
+func getColorWriter(w io.Writer) color.Writer {
+	if ww, ok := w.(color.Writer); ok {
+		return ww
 	}
-	return color.NewWithOutput(w)
+	return color.NewWriter(w)
 }
 
 // tcpKeepAliveListener sets TCP keep-alive timeouts on accepted
