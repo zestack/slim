@@ -4,9 +4,9 @@ import (
 	stdctx "context"
 	"net/http"
 	"time"
-	"zestack.dev/color"
 
 	"github.com/rs/xid"
+	"zestack.dev/color"
 	"zestack.dev/log"
 )
 
